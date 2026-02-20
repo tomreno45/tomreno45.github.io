@@ -164,12 +164,34 @@
             background: white; border: 2px solid #e0e0e0;
             border-radius: 8px; padding: 12px 16px;
             display: grid;
-            grid-template-columns: auto 1fr auto auto auto auto auto auto auto;
+            grid-template-columns: auto 1fr auto auto auto auto auto auto auto auto;
             gap: 20px;
             align-items: center;
         }
+        .player-card.injured { border-color: #e74c3c; background: #fff5f5; }
         .player-card:hover { border-color: #1e3c72; transform: translateX(4px); }
+        .player-card.injured:hover { border-color: #e74c3c; }
         .depth-badge { background: #1e3c72; color: white; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+        .injury-badge {
+            background: #e74c3c;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+        }
+        .injury-type {
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .injury-weeks {
+            font-size: 9px;
+            opacity: 0.9;
+        }
         .player-name { font-size: 16px; font-weight: 700; color: #1e3c72; }
         .player-detail { font-size: 14px; display: flex; flex-direction: column; align-items: center; }
         .player-detail-label { font-size: 10px; color: #888; text-transform: uppercase; }
@@ -408,7 +430,7 @@
     // ── Helpers ─────────────────────────────────────────────────────────────
     function logoImg(teamName, cls) {
         if (!teamName) return '';
-        return '<img src="Pictures/' + teamName + '.png" alt="' + teamName + '" class="' + (cls||'team-logo') + '" onerror="this.style.display=\'none\'">';
+        return '<img src="Pictures/' + teamName + '.png" alt="' + teamName + '" class="' + (cls||'team-logo') + '" onerror="this.onerror=null; this.src=\'pictures/' + teamName + '.png\'; this.onerror=function(){this.style.display=\'none\'}">';
     }
     function fmtHeight(inches) { return Math.floor(inches/12) + "'" + (inches%12) + '"'; }
     function getInitials(name) {
@@ -440,19 +462,30 @@
         const id = e.target.value;
         if (!id) { clearRoster(); return; }
         const team = query('SELECT * FROM Teams WHERE TeamID = ?', [id])[0];
+        
+        // Get current league state
+        const leagueState = query('SELECT Season, Week FROM LeagueState LIMIT 1')[0];
+        const currentSeason = leagueState ? leagueState.Season : 2025;
+        const currentWeek = leagueState ? leagueState.Week : 1;
+        
         const roster = query(`
             SELECT r.PlayerID, r.Pos, r.DepthChart,
                    p.FirstName, p.LastName, p.Age, p.Height, p.Weight, p.College,
-                   pa.overall, pa.overall_let, pa.potential, pa.potential_let
+                   pa.overall, pa.overall_let, pa.potential, pa.potential_let,
+                   i.InjuryType, i.WeekStart, i.WeekEnd
             FROM Rosters r
             LEFT JOIN Players p ON r.PlayerID = p.PlayerID
             LEFT JOIN PlayerAttributes pa ON r.PlayerID = pa.PlayerID
+            LEFT JOIN InjuryLog i ON r.PlayerID = i.PlayerID 
+                AND i.Season = ? 
+                AND i.WeekStart <= ? 
+                AND i.WeekEnd >= ?
             WHERE r.TeamID = ?
             ORDER BY CASE r.Pos
                 WHEN 'QB' THEN 1 WHEN 'WR' THEN 2 WHEN 'RB' THEN 3 WHEN 'TE' THEN 4 WHEN 'OL' THEN 5
                 WHEN 'DE' THEN 6 WHEN 'DT' THEN 7 WHEN 'LB' THEN 8 WHEN 'CB' THEN 9 WHEN 'FS' THEN 10
                 WHEN 'SS' THEN 11 WHEN 'K' THEN 12 WHEN 'P' THEN 13 ELSE 14 END, r.DepthChart
-        `, [id]);
+        `, [currentSeason, currentWeek, currentWeek, id]);
         renderTeamHeader(team);
         renderRosterStats(roster);
         renderRoster(roster);
@@ -487,6 +520,11 @@
         const groups = {};
         roster.forEach(p => { (groups[p.Pos] = groups[p.Pos] || []).push(p); });
         const order = ['QB','WR','RB','TE','OL','DE','DT','LB','CB','FS','SS','K','P'];
+        
+        // Get current week for injury calculation
+        const leagueState = query('SELECT Week FROM LeagueState LIMIT 1')[0];
+        const currentWeek = leagueState ? leagueState.Week : 1;
+        
         let html = '<div class="roster-container">';
         order.forEach(pos => {
             if (!groups[pos]) return;
@@ -495,10 +533,27 @@
             groups[pos].forEach(p => {
                 const ovr = p.overall_let || p.overall || 'N/A';
                 const pot = p.potential_let || p.potential || 'N/A';
-                html += '<div class="player-card">' +
+                const isInjured = p.InjuryType && p.WeekEnd >= currentWeek;
+                const weeksRemaining = isInjured ? (p.WeekEnd - currentWeek + 1) : 0;
+                
+                // Clean injury type (remove quotes if present)
+                const injuryType = p.InjuryType ? p.InjuryType.replace(/"/g, '') : '';
+                
+                html += '<div class="player-card' + (isInjured ? ' injured' : '') + '">' +
                     '<div class="depth-badge">' + (p.DepthChart||'-') + '</div>' +
-                    '<div class="player-name">' + (p.FirstName||'') + ' ' + (p.LastName||'') + '</div>' +
-                    '<div class="player-detail"><div class="player-detail-label">Age</div><div class="player-detail-value">' + (p.Age||'-') + '</div></div>' +
+                    '<div class="player-name">' + (p.FirstName||'') + ' ' + (p.LastName||'') + '</div>';
+                
+                // Add injury badge if injured
+                if (isInjured) {
+                    html += '<div class="injury-badge">' +
+                        '<div class="injury-type">🏥 ' + injuryType + '</div>' +
+                        '<div class="injury-weeks">' + weeksRemaining + ' week' + (weeksRemaining > 1 ? 's' : '') + '</div>' +
+                        '</div>';
+                } else {
+                    html += '<div></div>'; // Empty cell to maintain grid
+                }
+                
+                html += '<div class="player-detail"><div class="player-detail-label">Age</div><div class="player-detail-value">' + (p.Age||'-') + '</div></div>' +
                     '<div class="player-detail"><div class="player-detail-label">Height</div><div class="player-detail-value">' + (p.Height ? fmtHeight(p.Height) : '-') + '</div></div>' +
                     '<div class="player-detail"><div class="player-detail-label">Weight</div><div class="player-detail-value">' + (p.Weight||'-') + '</div></div>' +
                     '<div class="player-detail"><div class="player-detail-label">College</div><div class="player-detail-value">' + (p.College||'-') + '</div></div>' +
