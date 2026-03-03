@@ -245,6 +245,34 @@
         .game-badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; margin-left: 8px; }
         .badge-tie { background: #f39c12; color: white; }
         .badge-ot { background: #e74c3c; color: white; }
+        .game-stats-container {
+            background: #f8f9ff;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+        .game-stats-container table {
+            background: white;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .game-stats-container th {
+            background: #1e3c72;
+            color: white;
+            padding: 10px 12px;
+            text-align: left;
+            font-size: 12px;
+        }
+        .game-stats-container td {
+            padding: 8px 12px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .game-stats-container tr:last-child td {
+            border-bottom: none;
+        }
+        .game-stats-container tr:hover {
+            background: #f8f9ff;
+        }
 
         /* News feed */
         .news-feed { max-width: 620px; margin: 0 auto; }
@@ -569,10 +597,7 @@
     <h1>🏈 WFL Team Manager</h1>
     
     <div style="text-align: center; margin-bottom: 20px;">
-        <div id="leagueInfo" style="color: white; font-size: 18px; margin-bottom: 10px;"></div>
-        <button onclick="reloadDatabase()" style="background: rgba(255,255,255,0.2); border: 2px solid white; color: white; padding: 8px 16px; font-size: 14px;">
-            🔄 Reload Database
-        </button>
+        <div id="leagueInfo" style="color: white; font-size: 18px;"></div>
     </div>
 
     <div class="tabs">
@@ -588,7 +613,6 @@
             <div class="control-group">
                 <label for="teamSelect">Select Team:</label>
                 <select id="teamSelect"><option value="">-- Choose a team --</option></select>
-                <button onclick="clearRoster()">Clear</button>
             </div>
         </div>
         <div id="roster-error"></div>
@@ -603,7 +627,6 @@
         <div class="controls">
             <div class="control-group">
                 <h2 style="color:#333;margin:0;">Team Standings</h2>
-                <button onclick="loadStandings()">🔄 Refresh</button>
             </div>
         </div>
         <div id="standings-container"></div>
@@ -613,7 +636,6 @@
         <div class="controls">
             <div class="control-group">
                 <h2 style="color:#333;margin:0;">Game Scores</h2>
-                <button onclick="loadScores()">🔄 Refresh</button>
             </div>
         </div>
         <div id="scores-container"></div>
@@ -631,10 +653,6 @@
                     <option value="kicking">Kicking</option>
                     <option value="punting">Punting</option>
                 </select>
-                <label for="sortSelect">Sort By:</label>
-                <select id="sortSelect" onchange="filterStatsBySkill()"><option value="">-- Choose stat --</option></select>
-                <button id="sortOrderBtn" onclick="toggleSortOrder()">↓ Desc</button>
-                <button onclick="loadSeasonStats()">🔄 Refresh</button>
             </div>
         </div>
         <div id="season-stats-container"></div>
@@ -651,7 +669,6 @@
                     <option value="injury">Injuries</option>
                     <option value="trade">Trades</option>
                 </select>
-                <button onclick="loadNews()">🔄 Refresh</button>
             </div>
         </div>
         <div id="news-container"></div>
@@ -683,7 +700,9 @@
     let db = null;
     let allSeasonStats = [];
     let allNews = [];
-    let sortOrder = 'desc';
+    let currentSortColumn = 'passingYards'; // Default sort column
+    let currentSortOrder = 'desc'; // Default sort order
+    let currentSkill = 'passing'; // Track current skill category
 
     // ── Initialize database ─────────────────────────────────────────────────
     async function initDatabase() {
@@ -962,11 +981,11 @@
         document.getElementById('standings-container').innerHTML = html + '</tbody></table></div>';
     }
 
-    // ── Scores ──────────────────────────────────────────────────────────────
+    // ── Scores ───────────────────────────────────────────────────────────────
     function loadScores() {
         const scores = query(`
             SELECT g.GameID, g.SeasonID, g.HomeTeamScore, g.AwayTeamScore,
-                   g.TieFlag, g.OvertimeFlag,
+                   g.TieFlag, g.OvertimeFlag, g.HomeTeamID, g.AwayTeamID,
                    ht.name as HomeTeamName, at.name as AwayTeamName
             FROM GameLog g
             LEFT JOIN Teams ht ON g.HomeTeamID = ht.TeamID
@@ -977,7 +996,7 @@
         scores.forEach(g => {
             const hw = g.HomeTeamScore > g.AwayTeamScore && !g.TieFlag;
             const aw = g.AwayTeamScore > g.HomeTeamScore && !g.TieFlag;
-            html += '<div class="game-card">' +
+            html += '<div class="game-card" data-game-id="' + g.GameID + '">' +
                 '<div class="game-header"><div><strong>Game '+g.GameID+'</strong> — Season '+g.SeasonID+'</div>' +
                 '<div>'+(g.TieFlag?'<span class="game-badge badge-tie">TIE</span>':'')+(g.OvertimeFlag?'<span class="game-badge badge-ot">OT</span>':'')+'</div></div>' +
                 '<div class="game-teams">' +
@@ -988,9 +1007,129 @@
                 '<div class="game-team-container" style="align-items:flex-start">'+logoImg(g.HomeTeamName,'team-logo')+
                 '<div class="team-name'+(hw?' winner':'')+'">'+g.HomeTeamName+'</div>' +
                 '<div class="score'+(hw?' winner':'')+'">'+g.HomeTeamScore+'</div></div>' +
-                '</div></div>';
+                '</div>' +
+                '<div style="text-align:center;margin-top:12px;">' +
+                '<button onclick="toggleGameStats('+g.GameID+', '+g.HomeTeamID+', '+g.AwayTeamID+')" style="padding:8px 16px;font-size:13px;">View Game Stats</button>' +
+                '</div>' +
+                '<div id="game-stats-'+g.GameID+'" class="game-stats-container" style="display:none;"></div>' +
+                '</div>';
         });
         document.getElementById('scores-container').innerHTML = html + '</div>';
+    }
+    
+    function toggleGameStats(gameID, homeTeamID, awayTeamID) {
+        const container = document.getElementById('game-stats-' + gameID);
+        
+        if (container.style.display === 'none') {
+            // Load and show stats
+            const stats = query(`
+                SELECT s.PlayerID, p.FirstName, p.LastName, p.Position, r.TeamID,
+                       s.passingAttempts, s.passingCompletions, s.passingYards, s.passingTDs, s.passingInterceptions,
+                       s.rushAttempts, s.rushYards, s.rushTDs,
+                       s.receivingTargets, s.receivingReceptions, s.receivingYards, s.receivingTDs,
+                       s.defensiveTackles, s.defensiveSacks, s.defensiveInterceptions,
+                       s.fgAttempt, s.fgMake, s.puntAttempt, s.puntYards
+                FROM SeasonStats s
+                LEFT JOIN Players p ON s.PlayerID = p.PlayerID
+                LEFT JOIN Rosters r ON s.PlayerID = r.PlayerID
+                WHERE s.GameID = ?
+                ORDER BY r.TeamID, p.Position
+            `, [gameID]);
+            
+            if (!stats.length) {
+                container.innerHTML = '<div style="padding:20px;text-align:center;color:#999;">No stats available for this game</div>';
+            } else {
+                renderGameStats(stats, homeTeamID, awayTeamID, container);
+            }
+            container.style.display = 'block';
+        } else {
+            // Hide stats
+            container.style.display = 'none';
+        }
+    }
+    
+    function renderGameStats(stats, homeTeamID, awayTeamID, container) {
+        // Separate stats by team
+        const homeStats = stats.filter(s => s.TeamID === homeTeamID);
+        const awayStats = stats.filter(s => s.TeamID === awayTeamID);
+        
+        let html = '<div style="margin-top:20px;padding-top:20px;border-top:2px solid #e0e0e0;">';
+        
+        // Passing stats
+        const passers = stats.filter(s => (s.passingAttempts||0) > 0);
+        if (passers.length) {
+            html += '<h3 style="color:#1e3c72;margin-bottom:10px;font-size:16px;">Passing</h3>';
+            html += '<table style="width:100%;font-size:13px;margin-bottom:20px;"><thead><tr><th>Player</th><th>Cmp</th><th>Att</th><th>Yds</th><th>TD</th><th>INT</th><th>Rating</th></tr></thead><tbody>';
+            passers.forEach(p => {
+                const comp = p.passingCompletions||0;
+                const att = p.passingAttempts||0;
+                const yds = p.passingYards||0;
+                const avg = att > 0 ? (yds/att).toFixed(1) : '0.0';
+                html += '<tr><td><strong>'+p.FirstName+' '+p.LastName+'</strong></td>' +
+                    '<td>'+comp+'</td><td>'+att+'</td><td>'+yds+'</td><td>'+(p.passingTDs||0)+'</td><td>'+(p.passingInterceptions||0)+'</td><td>'+avg+'</td></tr>';
+            });
+            html += '</tbody></table>';
+        }
+        
+        // Rushing stats
+        const rushers = stats.filter(s => (s.rushAttempts||0) > 0);
+        if (rushers.length) {
+            html += '<h3 style="color:#1e3c72;margin-bottom:10px;font-size:16px;">Rushing</h3>';
+            html += '<table style="width:100%;font-size:13px;margin-bottom:20px;"><thead><tr><th>Player</th><th>Att</th><th>Yds</th><th>Avg</th><th>TD</th></tr></thead><tbody>';
+            rushers.forEach(p => {
+                const att = p.rushAttempts||0;
+                const yds = p.rushYards||0;
+                const avg = att > 0 ? (yds/att).toFixed(1) : '0.0';
+                html += '<tr><td><strong>'+p.FirstName+' '+p.LastName+'</strong></td>' +
+                    '<td>'+att+'</td><td>'+yds+'</td><td>'+avg+'</td><td>'+(p.rushTDs||0)+'</td></tr>';
+            });
+            html += '</tbody></table>';
+        }
+        
+        // Receiving stats
+        const receivers = stats.filter(s => (s.receivingTargets||0) > 0);
+        if (receivers.length) {
+            html += '<h3 style="color:#1e3c72;margin-bottom:10px;font-size:16px;">Receiving</h3>';
+            html += '<table style="width:100%;font-size:13px;margin-bottom:20px;"><thead><tr><th>Player</th><th>Tgt</th><th>Rec</th><th>Yds</th><th>Avg</th><th>TD</th></tr></thead><tbody>';
+            receivers.forEach(p => {
+                const rec = p.receivingReceptions||0;
+                const yds = p.receivingYards||0;
+                const avg = rec > 0 ? (yds/rec).toFixed(1) : '0.0';
+                html += '<tr><td><strong>'+p.FirstName+' '+p.LastName+'</strong></td>' +
+                    '<td>'+(p.receivingTargets||0)+'</td><td>'+rec+'</td><td>'+yds+'</td><td>'+avg+'</td><td>'+(p.receivingTDs||0)+'</td></tr>';
+            });
+            html += '</tbody></table>';
+        }
+        
+        // Defense stats
+        const defenders = stats.filter(s => (s.defensiveTackles||0) > 0 || (s.defensiveSacks||0) > 0);
+        if (defenders.length) {
+            html += '<h3 style="color:#1e3c72;margin-bottom:10px;font-size:16px;">Defense (Top Performers)</h3>';
+            html += '<table style="width:100%;font-size:13px;margin-bottom:20px;"><thead><tr><th>Player</th><th>Tackles</th><th>Sacks</th><th>INT</th></tr></thead><tbody>';
+            defenders.sort((a,b) => (b.defensiveTackles||0) - (a.defensiveTackles||0)).slice(0,10).forEach(p => {
+                html += '<tr><td><strong>'+p.FirstName+' '+p.LastName+'</strong></td>' +
+                    '<td>'+(p.defensiveTackles||0)+'</td><td>'+(p.defensiveSacks||0)+'</td><td>'+(p.defensiveInterceptions||0)+'</td></tr>';
+            });
+            html += '</tbody></table>';
+        }
+        
+        // Kicking stats
+        const kickers = stats.filter(s => (s.fgAttempt||0) > 0);
+        if (kickers.length) {
+            html += '<h3 style="color:#1e3c72;margin-bottom:10px;font-size:16px;">Kicking</h3>';
+            html += '<table style="width:100%;font-size:13px;margin-bottom:20px;"><thead><tr><th>Player</th><th>FG Made</th><th>FG Att</th><th>FG%</th></tr></thead><tbody>';
+            kickers.forEach(p => {
+                const att = p.fgAttempt||0;
+                const made = p.fgMake||0;
+                const pct = att > 0 ? ((made/att)*100).toFixed(1)+'%' : '0%';
+                html += '<tr><td><strong>'+p.FirstName+' '+p.LastName+'</strong></td>' +
+                    '<td>'+made+'</td><td>'+att+'</td><td>'+pct+'</td></tr>';
+            });
+            html += '</tbody></table>';
+        }
+        
+        html += '</div>';
+        container.innerHTML = html;
     }
 
     // ── Season Stats ────────────────────────────────────────────────────────
@@ -1028,49 +1167,67 @@
     }
 
     const sortOptionMap = {
-        passing: [['passingYards','Pass Yards'],['passingTDs','Pass TDs'],['passingAttempts','Attempts'],['passingCompletions','Completions'],['passingInterceptions','INTs']],
-        rushing: [['rushYards','Rush Yards'],['rushTDs','Rush TDs'],['rushAttempts','Attempts']],
-        receiving: [['receivingYards','Rec Yards'],['receivingTDs','Rec TDs'],['receivingReceptions','Receptions'],['receivingTargets','Targets']],
+        passing: [['passingYards','Pass Yards'],['passingTDs','Pass TDs'],['passingAvg','Avg'],['passingAttempts','Attempts'],['passingCompletions','Completions'],['passingInterceptions','INTs']],
+        rushing: [['rushYards','Rush Yards'],['rushTDs','Rush TDs'],['rushAvg','Avg'],['rushAttempts','Attempts']],
+        receiving: [['receivingYards','Rec Yards'],['receivingTDs','Rec TDs'],['receivingAvg','Avg'],['receivingReceptions','Receptions'],['receivingTargets','Targets']],
         defense: [['defensiveTackles','Tackles'],['defensiveSacks','Sacks'],['defensiveInterceptions','INTs'],['defensiveFumbles','Fumbles'],['defensivePassBreakups','PBUs'],['defensiveTFL','TFLs']],
-        kicking: [['fgMake','FG Made'],['fgAttempt','FG Att']],
-        punting: [['puntYards','Punt Yards'],['puntAttempt','Punts']]
+        kicking: [['fgPct','FG%'],['fgMake','FG Made'],['fgAttempt','FG Att']],
+        punting: [['puntAvg','Avg'],['puntYards','Punt Yards'],['puntAttempt','Punts']]
     };
 
     function filterStatsBySkill() {
-        const skill = document.getElementById('skillSelect').value;
-        const sel = document.getElementById('sortSelect');
-        const prev = sel.value;
-        sel.innerHTML = '<option value="">-- Choose stat --</option>';
-        (sortOptionMap[skill] || []).forEach(o => {
-            const opt = document.createElement('option');
-            opt.value = o[0]; opt.textContent = o[1];
-            if (o[0] === prev) opt.selected = true;
-            sel.appendChild(opt);
+        currentSkill = document.getElementById('skillSelect').value;
+        
+        // Calculate averages/percentages for ALL stats first (needed for sorting)
+        allSeasonStats.forEach(p => {
+            p.passingAvg = (p.passingAttempts > 0) ? (p.passingYards / p.passingAttempts) : 0;
+            p.rushAvg = (p.rushAttempts > 0) ? (p.rushYards / p.rushAttempts) : 0;
+            p.receivingAvg = (p.receivingReceptions > 0) ? (p.receivingYards / p.receivingReceptions) : 0;
+            p.fgPct = (p.fgAttempt > 0) ? ((p.fgMake / p.fgAttempt) * 100) : 0;
+            p.puntAvg = (p.puntAttempt > 0) ? (p.puntYards / p.puntAttempt) : 0;
         });
-        const sortBy = sel.value;
-
-        let filtered = [];
-        if (skill === 'passing') filtered = allSeasonStats.filter(s => s.Position === 'QB');
-        else if (skill === 'rushing') filtered = allSeasonStats.filter(s => (s.rushAttempts||0) > 0);
-        else if (skill === 'receiving') filtered = allSeasonStats.filter(s => (s.receivingTargets||0) > 0);
-        else if (skill === 'defense') filtered = allSeasonStats.filter(s => ['DE','DT','LB','CB','FS','SS'].includes(s.Position));
-        else if (skill === 'kicking') filtered = allSeasonStats.filter(s => s.Position === 'K');
-        else if (skill === 'punting') filtered = allSeasonStats.filter(s => s.Position === 'P');
-
-        if (sortBy) {
-            filtered.sort((a,b) => sortOrder === 'desc' ? (b[sortBy]||0) - (a[sortBy]||0) : (a[sortBy]||0) - (b[sortBy]||0));
+        
+        // Set default sort column for the skill if needed
+        const defaultSort = sortOptionMap[currentSkill] ? sortOptionMap[currentSkill][0][0] : '';
+        if (!currentSortColumn || !sortOptionMap[currentSkill].find(s => s[0] === currentSortColumn)) {
+            currentSortColumn = defaultSort;
+            currentSortOrder = 'desc';
         }
 
-        renderSeasonStats(filtered, skill);
+        let filtered = [];
+        if (currentSkill === 'passing') filtered = allSeasonStats.filter(s => s.Position === 'QB');
+        else if (currentSkill === 'rushing') filtered = allSeasonStats.filter(s => (s.rushAttempts||0) > 0);
+        else if (currentSkill === 'receiving') filtered = allSeasonStats.filter(s => (s.receivingTargets||0) > 0);
+        else if (currentSkill === 'defense') filtered = allSeasonStats.filter(s => ['DE','DT','LB','CB','FS','SS'].includes(s.Position));
+        else if (currentSkill === 'kicking') filtered = allSeasonStats.filter(s => s.Position === 'K');
+        else if (currentSkill === 'punting') filtered = allSeasonStats.filter(s => s.Position === 'P');
+
+        if (currentSortColumn) {
+            filtered.sort((a,b) => currentSortOrder === 'desc' ? (b[currentSortColumn]||0) - (a[currentSortColumn]||0) : (a[currentSortColumn]||0) - (b[currentSortColumn]||0));
+        }
+
+        renderSeasonStats(filtered, currentSkill);
+    }
+    
+    function sortByColumn(column) {
+        if (currentSortColumn === column) {
+            // Toggle order if clicking same column
+            currentSortOrder = currentSortOrder === 'desc' ? 'asc' : 'desc';
+        } else {
+            // New column, default to descending
+            currentSortColumn = column;
+            currentSortOrder = 'desc';
+        }
+        filterStatsBySkill();
     }
 
     const colMap = {
-        passing: ['Att','Comp','Yards','TD','INT','Avg'],
-        rushing: ['Att','Yards','Avg','TD','Fum'],
-        receiving: ['Targets','Rec','Yards','Avg','TD'],
-        defense: ['Tackles','Sacks','TFL','INT','Fum','PBU'],
-        kicking: ['FG Made','FG Att','FG%'],
-        punting: ['Punts','Yards','Avg']
+        passing: [['passingAttempts','Att'],['passingCompletions','Comp'],['passingYards','Yards'],['passingTDs','TD'],['passingInterceptions','INT'],['passingAvg','Avg']],
+        rushing: [['rushAttempts','Att'],['rushYards','Yards'],['rushAvg','Avg'],['rushTDs','TD'],['rushFumbles','Fum']],
+        receiving: [['receivingTargets','Targets'],['receivingReceptions','Rec'],['receivingYards','Yards'],['receivingAvg','Avg'],['receivingTDs','TD']],
+        defense: [['defensiveTackles','Tackles'],['defensiveSacks','Sacks'],['defensiveTFL','TFL'],['defensiveInterceptions','INT'],['defensiveFumbles','Fum'],['defensivePassBreakups','PBU']],
+        kicking: [['fgMake','FG Made'],['fgAttempt','FG Att'],['fgPct','FG%']],
+        punting: [['puntAttempt','Punts'],['puntYards','Yards'],['puntAvg','Avg']]
     };
 
     function renderSeasonStats(stats, skill) {
@@ -1086,9 +1243,18 @@
         
         const cols = colMap[skill] || [];
         let html = '<div class="stats-table-container">';
-        html += '<div style="margin-bottom:15px;color:#666;font-size:14px;">Season ' + currentSeason + ' Stats</div>';
+        html += '<div style="margin-bottom:15px;color:#666;font-size:14px;">Season ' + currentSeason + ' Stats (Click column to sort)</div>';
         html += '<table><thead><tr><th>#</th><th>Player</th><th>Team</th><th>Pos</th><th>GP</th>';
-        cols.forEach(col => { html += '<th>'+col+'</th>'; });
+        
+        // Clickable headers with sort indicators
+        cols.forEach(col => {
+            const colKey = col[0];
+            const colLabel = col[1];
+            const isSorted = currentSortColumn === colKey;
+            const sortArrow = isSorted ? (currentSortOrder === 'desc' ? ' ▼' : ' ▲') : '';
+            html += '<th onclick="sortByColumn(\'' + colKey + '\')" style="cursor:pointer;user-select:none;">' + colLabel + sortArrow + '</th>';
+        });
+        
         html += '</tr></thead><tbody>';
 
         stats.forEach((p,i) => {
@@ -1097,28 +1263,24 @@
                 '<td>'+(p.TeamName||'N/A')+'</td><td>'+(p.Position||'')+'</td><td>'+(p.gamesPlayed||0)+'</td>';
 
             if (skill === 'passing') {
-                const att = p.passingAttempts||0, yds = p.passingYards||0;
-                html += '<td>'+att+'</td><td>'+(p.passingCompletions||0)+'</td><td>'+yds+'</td>' +
+                html += '<td>'+(p.passingAttempts||0)+'</td><td>'+(p.passingCompletions||0)+'</td><td>'+(p.passingYards||0)+'</td>' +
                         '<td>'+(p.passingTDs||0)+'</td><td>'+(p.passingInterceptions||0)+'</td>' +
-                        '<td>'+(att > 0 ? (yds/att).toFixed(1) : '0.0')+'</td>';
+                        '<td>'+p.passingAvg.toFixed(1)+'</td>';
             } else if (skill === 'rushing') {
-                const att = p.rushAttempts||0, yds = p.rushYards||0;
-                html += '<td>'+att+'</td><td>'+yds+'</td><td>'+(att > 0 ? (yds/att).toFixed(1) : '0.0')+'</td>' +
+                html += '<td>'+(p.rushAttempts||0)+'</td><td>'+(p.rushYards||0)+'</td>' +
+                        '<td>'+p.rushAvg.toFixed(1)+'</td>' +
                         '<td>'+(p.rushTDs||0)+'</td><td>'+(p.rushFumbles||0)+'</td>';
             } else if (skill === 'receiving') {
-                const rec = p.receivingReceptions||0, yds = p.receivingYards||0;
-                html += '<td>'+(p.receivingTargets||0)+'</td><td>'+rec+'</td><td>'+yds+'</td>' +
-                        '<td>'+(rec > 0 ? (yds/rec).toFixed(1) : '0.0')+'</td><td>'+(p.receivingTDs||0)+'</td>';
+                html += '<td>'+(p.receivingTargets||0)+'</td><td>'+(p.receivingReceptions||0)+'</td><td>'+(p.receivingYards||0)+'</td>' +
+                        '<td>'+p.receivingAvg.toFixed(1)+'</td><td>'+(p.receivingTDs||0)+'</td>';
             } else if (skill === 'defense') {
                 html += '<td>'+(p.defensiveTackles||0)+'</td><td>'+(p.defensiveSacks||0)+'</td>' +
                         '<td>'+(p.defensiveTFL||0)+'</td><td>'+(p.defensiveInterceptions||0)+'</td>' +
                         '<td>'+(p.defensiveFumbles||0)+'</td><td>'+(p.defensivePassBreakups||0)+'</td>';
             } else if (skill === 'kicking') {
-                const att = p.fgAttempt||0, made = p.fgMake||0;
-                html += '<td>'+made+'</td><td>'+att+'</td><td>'+(att > 0 ? ((made/att)*100).toFixed(1)+'%' : '0.0%')+'</td>';
+                html += '<td>'+(p.fgMake||0)+'</td><td>'+(p.fgAttempt||0)+'</td><td>'+p.fgPct.toFixed(1)+'%</td>';
             } else if (skill === 'punting') {
-                const att = p.puntAttempt||0, yds = p.puntYards||0;
-                html += '<td>'+att+'</td><td>'+yds+'</td><td>'+(att > 0 ? (yds/att).toFixed(1) : '0.0')+'</td>';
+                html += '<td>'+(p.puntAttempt||0)+'</td><td>'+(p.puntYards||0)+'</td><td>'+p.puntAvg.toFixed(1)+'</td>';
             }
             html += '</tr>';
         });
