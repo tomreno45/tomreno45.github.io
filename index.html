@@ -961,20 +961,33 @@
                 FROM GameLog WHERE HomeTeamID=? OR AwayTeamID=?
             `, [t.TeamID,t.TeamID,t.TeamID,t.TeamID,t.TeamID,t.TeamID])[0];
             const pf = pts.pf || 0, pa = pts.pa || 0;
-            return {name: t.name, wins, losses, ties, points_for: pf, points_against: pa, point_diff: pf-pa};
+            
+            // Calculate win percentage (ties count as 0.5 wins)
+            const totalGames = wins + losses + ties;
+            const winPct = totalGames > 0 ? ((wins + (ties * 0.5)) / totalGames) : 0;
+            
+            return {name: t.name, wins, losses, ties, points_for: pf, points_against: pa, point_diff: pf-pa, win_pct: winPct};
         });
-        standings.sort((a,b) => b.wins - a.wins || b.point_diff - a.point_diff);
+        
+        // Sort by win percentage (desc), then by point differential (desc)
+        standings.sort((a,b) => {
+            if (Math.abs(b.win_pct - a.win_pct) < 0.0001) { // Handle float comparison
+                return b.point_diff - a.point_diff;
+            }
+            return b.win_pct - a.win_pct;
+        });
 
         let html = '<div class="standings-table-container"><table><thead><tr>' +
-            '<th>Rank</th><th>Team</th><th>W</th><th>L</th><th>T</th><th>PF</th><th>PA</th><th>Diff</th>' +
+            '<th>Rank</th><th>Team</th><th>W</th><th>L</th><th>T</th><th>PCT</th><th>PF</th><th>PA</th><th>Diff</th>' +
             '</tr></thead><tbody>';
         standings.forEach((t,i) => {
             const r = i+1, rc = r<=3 ? 'rank-'+r : '';
             const diff = t.point_diff >= 0 ? '+'+t.point_diff : t.point_diff;
             const color = t.point_diff >= 0 ? '#2ecc71' : '#e74c3c';
+            const pct = t.win_pct.toFixed(3); // Standard format: .750, .500, etc.
             html += '<tr><td><span class="rank-badge '+rc+'">'+r+'</span></td>' +
                 '<td><div class="team-with-logo">'+logoImg(t.name,'team-logo-small')+'<strong>'+t.name+'</strong></div></td>' +
-                '<td>'+t.wins+'</td><td>'+t.losses+'</td><td>'+t.ties+'</td>' +
+                '<td>'+t.wins+'</td><td>'+t.losses+'</td><td>'+t.ties+'</td><td><strong>'+pct+'</strong></td>' +
                 '<td>'+t.points_for+'</td><td>'+t.points_against+'</td>' +
                 '<td style="color:'+color+';font-weight:bold">'+diff+'</td></tr>';
         });
